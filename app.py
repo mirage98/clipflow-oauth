@@ -1,22 +1,102 @@
 import os
-from flask import Flask, request
+import secrets
+import sqlite3
+import requests
+from flask import Flask, redirect, request, session
 
 app = Flask(__name__)
+app.secret_key = os.environ.get("FLASK_SECRET", secrets.token_hex(32))
+
+CLIENT_KEY = os.environ.get("TIKTOK_CLIENT_KEY", "")
+CLIENT_SECRET = os.environ.get("TIKTOK_CLIENT_SECRET", "")
+REDIRECT_URI = "https://clipflow-oauth.onrender.com/callback"
+SCOPES = "user.info.basic,video.publish"
+
+def save_token(data):
+    conn = sqlite3.connect("tokens.db")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS tokens (
+            id INTEGER PRIMARY KEY,
+            access_token TEXT,
+            refresh_token TEXT,
+            expires_in INTEGER,
+            scope TEXT
+        )
+    """)
+    conn.execute(
+        "INSERT INTO tokens(access_token,refresh_token,expires_in,scope) VALUES(?,?,?,?)",
+        (
+            data.get("access_token"),
+            data.get("refresh_token"),
+            data.get("expires_in"),
+            data.get("scope"),
+        )
+    )
+    conn.commit()
+    conn.close()
 
 @app.route("/")
 def home():
-    return "ClipFlow OAuth handler is online."
+    return '<h2>ClipFlow</h2><a href="/login">Connect TikTok</a>'
+
+@app.route("/login")
+def login():
+    if not CLIENT_KEY:
+        return "TIKTOK_CLIENT_KEY is not configured.", 500
+
+    state = secrets.token_urlsafe(32)
+    session["oauth_state"] = state
+
+    params = {
+        "client_key": CLIENT_KEY,
+        "response_type": "code",
+        "scope": SCOPES,
+        "redirect_uri": REDIRECT_URI,
+        "state": state,
+    }
+    return redirect(
+        "https://www.tiktok.com/v2/auth/authorize/?"
+        + requests.compat.urlencode(params)
+    )
 
 @app.route("/callback")
 def callback():
-    error = request.args.get("error")
-    if error:
-        return "Authorization failed.", 400
+    if request.args.get("error"):
+        return "TikTok authorization was denied.", 400
 
     code = request.args.get("code")
-    if code:
-        return "Authorization received. You can close this page."
-    return "No authorization code received.", 400
+    returned_state = request.args.get("state")
+
+    if not code:
+        return "No authorization code received.", 400
+
+    if not returned_state or returned_state != session.get("oauth_state"):
+        return "Invalid OAuth state.", 400
+
+    if not CLIENT_KEY or not CLIENT_SECRET:
+        return "Server credentials are not configured.", 500
+
+    response = requests.post(
+        "https://open.tiktokapis.com/v2/oauth/token/",
+        data={
+            "client_key": CLIENT_KEY,
+            "client_secret": CLIENT_SECRET,
+            "code": code,
+            "grant_type": "authorization_code",
+            "redirect_uri": REDIRECT_URI,
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        timeout=30,
+    )
+
+    data = response.json()
+
+    if response.status_code != 200 or "access_token" not in data:
+        return "Token exchange failed. Check server configuration.", 400
+
+    save_token(data)
+    session.pop("oauth_state", None)
+    return "TikTok authorization completed. Token saved on server."
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
