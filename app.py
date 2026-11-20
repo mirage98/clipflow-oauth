@@ -98,5 +98,28 @@ def callback():
     session.pop("oauth_state", None)
     return "TikTok authorization completed. Token saved on server."
 
-if __name__ == "__main__":
+
+@app.route("/api/token")
+def api_token():
+    from flask import jsonify
+    import hmac
+
+    supplied = request.headers.get("X-ClipFlow-Key", "")
+    expected = os.environ.get("TOKEN_API_SECRET", "")
+
+    if not expected or not hmac.compare_digest(supplied, expected):
+        return jsonify({"error": "unauthorized"}), 401
+
+    conn = sqlite3.connect("tokens.db")
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        "SELECT * FROM tokens ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    conn.close()
+
+    if not row:
+        return jsonify({"error": "token_not_found"}), 404
+
+    return jsonify(dict(row))
+\nif __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
