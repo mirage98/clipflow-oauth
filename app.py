@@ -1,7 +1,8 @@
 import os
 import secrets
-import sqlite3
 import requests
+import psycopg
+from psycopg.rows import dict_row
 from flask import Flask, redirect, request, session
 
 app = Flask(__name__)
@@ -12,28 +13,36 @@ CLIENT_SECRET = os.environ.get("TIKTOK_CLIENT_SECRET", "")
 REDIRECT_URI = "https://clipflow-oauth.onrender.com/callback"
 SCOPES = "user.info.basic,video.publish"
 
+def get_db():
+    db_url = os.environ.get("DATABASE_URL")
+    if not db_url:
+        raise RuntimeError("DATABASE_URL is not configured")
+    return psycopg.connect(db_url, row_factory=dict_row)
+
+def init_db():
+    with get_db() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS tokens (
+                id BIGSERIAL PRIMARY KEY,
+                access_token TEXT,
+                refresh_token TEXT,
+                expires_in INTEGER,
+                scope TEXT
+            )
+        """)
+
 def save_token(data):
-    conn = sqlite3.connect("tokens.db")
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS tokens (
-            id INTEGER PRIMARY KEY,
-            access_token TEXT,
-            refresh_token TEXT,
-            expires_in INTEGER,
-            scope TEXT
+    init_db()
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO tokens(access_token,refresh_token,expires_in,scope) VALUES(%s,%s,%s,%s)",
+            (
+                data.get("access_token"),
+                data.get("refresh_token"),
+                data.get("expires_in"),
+                data.get("scope"),
+            )
         )
-    """)
-    conn.execute(
-        "INSERT INTO tokens(access_token,refresh_token,expires_in,scope) VALUES(?,?,?,?)",
-        (
-            data.get("access_token"),
-            data.get("refresh_token"),
-            data.get("expires_in"),
-            data.get("scope"),
-        )
-    )
-    conn.commit()
-    conn.close()
 
 @app.route("/")
 def home():
@@ -110,17 +119,20 @@ def api_token():
     if not expected or not hmac.compare_digest(supplied, expected):
         return jsonify({"error": "unauthorized"}), 401
 
-    conn = sqlite3.connect("tokens.db")
-    conn.row_factory = sqlite3.Row
-    row = conn.execute(
-        "SELECT * FROM tokens ORDER BY id DESC LIMIT 1"
-    ).fetchone()
-    conn.close()
+    try:
+        init_db()
+        with get_db() as conn:
+            row = conn.execute(
+                "SELECT * FROM tokens ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+    except Exception:
+        app.logger.exception("Database error in token API")
+        return jsonify({"error": "database_error"}), 500
 
     if not row:
         return jsonify({"error": "token_not_found"}), 404
 
-    return jsonify(dict(row))
+    return jsonify(row)
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
