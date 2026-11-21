@@ -135,12 +135,17 @@ def api_token():
     return jsonify(row)
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
     @app.route("/api/fingerprint")
 def fingerprint():
     import hashlib
+    from flask import jsonify
+
     secret = os.environ.get("TOKEN_API_SECRET", "")
     return jsonify({
         "fingerprint": hashlib.sha256(secret.encode()).hexdigest()[:16],
         "length": len(secret)
     })
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
