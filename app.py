@@ -11,7 +11,7 @@ app.secret_key = os.environ.get("FLASK_SECRET", secrets.token_hex(32))
 CLIENT_KEY = os.environ.get("TIKTOK_CLIENT_KEY", "")
 CLIENT_SECRET = os.environ.get("TIKTOK_CLIENT_SECRET", "")
 REDIRECT_URI = "https://clipflow-oauth.onrender.com/callback"
-SCOPES = "user.info.basic,video.publish"
+SCOPES = "user.info.basic,video.upload"
 
 def get_db():
     db_url = os.environ.get("DATABASE_URL")
