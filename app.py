@@ -134,7 +134,6 @@ def api_token():
 
     return jsonify(row)
 
-if __name__ == "__main__":
 @app.route("/api/fingerprint")
 def fingerprint():
     import hashlib
